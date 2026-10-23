@@ -1,0 +1,119 @@
+name: Test install-solana
+
+on:
+  push:
+    branches: [test-install-solana]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  install:
+    name: Install ${{ matrix.version }} (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        # GitHub digest, no digest, formerly release.solana.com, channel.
+        version: ["3.1.8", "2.1.9", "1.18.18", "stable"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: ./install-solana
+        with:
+          version: ${{ matrix.version }}
+          cache: "false"
+
+      - name: Check installed version
+        if: matrix.version != 'stable'
+        run: solana --version | grep -F "solana-cli $VERSION "
+        env:
+          VERSION: ${{ matrix.version }}
+
+  sha256-input:
+    name: sha256 input
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install with a wrong sha256
+        id: wrong
+        continue-on-error: true
+        uses: ./install-solana
+        with:
+          version: "3.1.8"
+          cache: "false"
+          sha256: "0000000000000000000000000000000000000000000000000000000000000000"
+
+      - name: Expect the wrong sha256 to fail with nothing unpacked
+        run: |
+          [[ "$OUTCOME" == failure ]] || { echo "::error::wrong sha256 was accepted"; exit 1; }
+          test ! -e "$HOME/.local/share/solana/install/releases/v3.1.8/solana-release"
+        env:
+          OUTCOME: ${{ steps.wrong.outcome }}
+
+      - name: Install with the correct sha256
+        uses: ./install-solana
+        with:
+          version: "3.1.8"
+          cache: "false"
+          sha256: "e951bb8127c57460bc3ebca1671952e9b164e249d713fcebe2c125f70b8791e8"
+
+  two-versions:
+    name: Two versions in one job
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: ./install-solana
+        with:
+          version: "2.1.9"
+          cache: "false"
+
+      - uses: ./install-solana
+        with:
+          version: "3.1.8"
+          cache: "false"
+
+      - name: Expect the second version to be active
+        run: solana --version | grep -F "solana-cli 3.1.8 "
+
+  cache-seed:
+    name: Cache seed
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: ./install-solana
+        with:
+          version: "3.1.8"
+          cache: "true"
+
+  cache-hit:
+    name: Cache hit
+    needs: cache-seed
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: ./install-solana
+        with:
+          version: "3.1.8"
+          cache: "true"
+
+      - name: Expect no download and a working CLI
+        run: |
+          test ! -e "$RUNNER_TEMP/solana-release-x86_64-unknown-linux-gnu.tar.bz2"
+          solana --version | grep -F "solana-cli 3.1.8 "
